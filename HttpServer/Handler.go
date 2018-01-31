@@ -9,6 +9,8 @@ type Handler struct {
 	GetRoutes []Route
 	PostRoutes []Route
 	PutRoutes []Route
+	RouteNotFound Route
+	ServerError Route
 }
 
 type Route struct {
@@ -21,31 +23,48 @@ func (handler Handler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	case http.MethodDelete:
 		for i := range handler.DeleteRoutes {
 			route := handler.DeleteRoutes[i]
-			if (route.URL == req.URL.String()) {
-			route.Action(res, *req)
+			if route.URL == req.URL.String() {
+				route.Action(res, *req)
+				return
 			}
 		}
+		handler.RouteNotFound.Action(res, *req)
 	case http.MethodGet:
 		for i := range handler.GetRoutes {
 			route := handler.GetRoutes[i]
-			if (route.URL == req.URL.String()) {
+			if route.URL == req.URL.String() {
 				route.Action(res, *req)
+				return
 			}
 		}
+		handler.RouteNotFound.Action(res, *req)
 	case http.MethodPost:
 		for i := range handler.PostRoutes {
 			route := handler.PostRoutes[i]
-			if (route.URL == req.URL.String()) {
+			if route.URL == req.URL.String() {
 				route.Action(res, *req)
+				return
 			}
 		}
+		handler.RouteNotFound.Action(res, *req)
 	case http.MethodPut:
 		for i := range handler.PutRoutes {
 			route := handler.PutRoutes[i]
-			if (route.URL == req.URL.String()) {
+			if route.URL == req.URL.String() {
 				route.Action(res, *req)
+				return
 			}
 		}
+		handler.RouteNotFound.Action(res, *req)
+	}
+}
+
+func (handler *Handler) AddError(errorType string, f func(res http.ResponseWriter, req http.Request)) {
+	switch errorType {
+	case "404":
+		handler.RouteNotFound = Route{"404", f}
+	case "500":
+		handler.ServerError = Route{"500", f}
 	}
 }
 

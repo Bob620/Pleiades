@@ -7,6 +7,7 @@ import (
 	"./HttpServer"
 	"./WSServer"
 	"net/http"
+	"github.com/aymerick/raymond"
 )
 
 var (
@@ -21,9 +22,27 @@ func main() {
 	)
 	flag.Parse()
 
+	webserver.AddError("404", func(res http.ResponseWriter, req http.Request) {
+		ctx := map[string]string {
+			"error": "wat",
+		}
+
+		res.Write([]byte(raymond.MustRender(HttpServer.ReadFile("./page/error.handlebars"), ctx)))
+	})
+
 	webserver.Get("/", func(res http.ResponseWriter, req http.Request) {
+		ctx := map[string]interface{} {
+			"text": "test",
+			"array": []map[string]interface{} {
+				{"data": "Bob", "wat": "5432"},
+				{"data": "Leefter", "wat": "5432"},
+				{"data": "Arc", "wat": "5432"},
+				{"data": "Kazuma", "wat": "5432"},
+			},
+		}
+
 		res.WriteHeader(200)
-		res.Write([]byte("<h1>test</h1>"))
+		res.Write([]byte(raymond.MustRender(HttpServer.ReadFile("./page/index.handlebars"), ctx)))
 	})
 
 	go func() {
