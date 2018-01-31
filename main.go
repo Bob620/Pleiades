@@ -24,7 +24,7 @@ func main() {
 
 	webserver.AddError("404", func(res http.ResponseWriter, req http.Request) {
 		ctx := map[string]string {
-			"error": "wat",
+			"error": "404",
 		}
 
 		res.Write([]byte(raymond.MustRender(HttpServer.ReadFile("./page/error.handlebars"), ctx)))
@@ -41,10 +41,23 @@ func main() {
 			},
 		}
 
-		res.WriteHeader(200)
 		res.Write([]byte(raymond.MustRender(HttpServer.ReadFile("./page/index.handlebars"), ctx)))
 	})
 
+	webserver.Routes[0].Routes = append(webserver.Routes[0].Routes, HttpServer.Route{"assets", http.MethodGet, []HttpServer.Route{}, HttpServer.ServeDir("./static/dist", "assets")})
+/*
+	webserver.Get("/assets/pleiades.css", func(res http.ResponseWriter, req http.Request) {
+		res.Write([]byte(HttpServer.ReadFile("./static/dist/pleiades.css")))
+	})
+
+	webserver.Get("/fonts/ionicons.ttf?v=2.0.0", func(res http.ResponseWriter, req http.Request) {
+		res.Write([]byte(HttpServer.ReadFile("./static/icons/ionicons/fonts/ionicons.ttf")))
+	})
+
+	webserver.Get("/assets/ionicons.woff?v=2.0.0", func(res http.ResponseWriter, req http.Request) {
+		res.Write([]byte(HttpServer.ReadFile("./static/icons/ionicons/fonts/ionicons.woff")))
+	})
+*/
 	go func() {
 		log.Println(fmt.Sprintf("Now Listening for http on localhost%s", *httpaddr))
 		http.ListenAndServe(*httpaddr, webserver)
