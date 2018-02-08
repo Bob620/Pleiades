@@ -3,24 +3,34 @@ package main
 import (
 	"log"
 	"fmt"
-	"flag"
 	"./HttpServer"
 	"./WSServer"
+	"./Database"
 	"net/http"
 	"github.com/aymerick/raymond"
+	"io/ioutil"
+	"encoding/json"
+	"time"
+	"github.com/globalsign/mgo/bson"
 )
 
-var (
-	wsaddr = flag.String("wsaddr", ":1337", "ws port")
-	httpaddr = flag.String("httpaddr", ":8010", "http port")
-)
+type Test struct {
+	ID bson.ObjectId `bson:"_id,omitempty"`
+	Test string
+	Timestamp time.Time
+}
 
 func main() {
+
+	settings := Setup()
+
 	var (
 		webserver HttpServer.Handler
 		wsserver WSServer.Handler
+		dbConn Database.MongodbConn
 	)
-	flag.Parse()
+
+	dbConn = Database.NewMongodbSession(settings.DatabaseURL, settings.DatabaseSettings)
 
 	webserver.AddError("404", func(res http.ResponseWriter, req http.Request) {
 		ctx := map[string]string {
@@ -44,13 +54,60 @@ func main() {
 		res.Write([]byte(raymond.MustRender(HttpServer.ReadFile("./page/index.handlebars"), ctx)))
 	})
 
-	webserver.Routes[0].Routes = append(webserver.Routes[0].Routes, HttpServer.Route{"assets", http.MethodGet, []HttpServer.Route{}, HttpServer.ServeDir("./static/dist", "assets")})
+	webserver.Routes[0].Routes = append(webserver.Routes[0].Routes, HttpServer.Route{
+		URL: "assets",
+		Method: http.MethodGet,
+		Routes: []HttpServer.Route{},
+		Action: HttpServer.ServeDir("./static/dist", "assets"),
+	})
 
 	go func() {
-		log.Println(fmt.Sprintf("Now Listening for http on localhost%s", *httpaddr))
-		http.ListenAndServe(*httpaddr, webserver)
+		log.Println(fmt.Sprintf("Now Listening for http on localhost%s", ":"+settings.Httpaddr))
+		http.ListenAndServe(":"+settings.Httpaddr, &webserver)
 	}()
 
-	log.Println(fmt.Sprintf("Now Listening for ws on localhost%s", *wsaddr))
-	http.ListenAndServe(*wsaddr, wsserver)
+	wsserver.Setup(dbConn)
+
+	log.Println(fmt.Sprintf("Now Listening for ws on localhost%s", ":"+settings.Wsaddr))
+	http.ListenAndServe(":"+settings.Wsaddr, &wsserver)
+}
+
+type Settings struct {
+	DatabaseURL string `json:"mongodbUrl"`
+	DatabaseSettings Database.Login `json:"mongodbSettings"`
+	Httpaddr string `json:"httpPort"`
+	Wsaddr string `json:"wsPort"`
+}
+
+func Setup() Settings {
+	var (
+		defaultConfig Settings
+		userConfig Settings
+	)
+
+	defaultFileBytes, err := ioutil.ReadFile("./config/configDefault.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	json.Unmarshal(defaultFileBytes, &defaultConfig)
+
+	fileBytes, err := ioutil.ReadFile("./config/config.json")
+	if err != nil {
+		ioutil.WriteFile("./config/config.json", defaultFileBytes, 0664)
+	}
+
+	json.Unmarshal(fileBytes, &userConfig)
+
+	if userConfig.Httpaddr == "" {
+		userConfig.Httpaddr = defaultConfig.Httpaddr
+	}
+	if userConfig.Wsaddr == "" {
+		userConfig.Wsaddr = defaultConfig.Wsaddr
+	}
+	if userConfig.DatabaseURL == "" {
+		userConfig.DatabaseURL = defaultConfig.DatabaseURL
+	}
+
+	return userConfig
 }

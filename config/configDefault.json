@@ -1,0 +1,10 @@
+{
+  "mongodbUrl": "localhost:27017",
+  "mongodbSettings": {
+    "username": "",
+    "password": "",
+    "source": ""
+  },
+  "wsPort": "1337",
+  "httpPort": "80"
+}

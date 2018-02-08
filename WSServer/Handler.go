@@ -7,6 +7,11 @@ import (
 	"log"
 	"crypto"
 	"io/ioutil"
+	"src/github.com/satori/go.uuid"
+	"crypto/rand"
+	"../Database"
+	"fmt"
+	"./Templates"
 )
 
 var (
@@ -19,53 +24,55 @@ var (
 //	Input string `json:"input"`
 //}
 
-type AuthInitial struct {
-	RequestedServices []string `json:"requestedServices"`
-	DeviceType string `json:"deviceType"`
-	DeviceId string `json:"deviceId"`
-	Key string `json:"key"`
-}
 
-type AuthReturn struct {
-	Authed bool `json:"authed"`
-	Id string `json:"id"`
-	Pass string `json:"pass"`
-}
-
-type Login struct {
-	Id string `json:"id"`
-	Pass string `json:"pass"`
-}
-
-type GeneralResponse struct {
-	Service string `json:"service"`
-	Type string `json:"type"`
-	Message string `json:"message"`
-}
-
-type Request struct {
-	Service string `json:"service"`
-	Type string `json:"type"`
-	Message string `json:"message"`
-}
-
-type Device struct {
-	Id string
-}
-
-type Connection struct {
-	Authed bool
-	Device Device
-	Totp []byte
-	Conn *websocket.Conn
-	Login string
-}
 
 type Handler struct {
-
+	otp twofactor.Totp
+	dbConn Database.MongodbConn
 }
 
-func (handler Handler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+func (handler *Handler) Setup(dbConn Database.MongodbConn) {
+	handler.dbConn = dbConn
+	handler.GenerateAuth()
+}
+
+func (handler *Handler) GenerateAuth() {
+	dbOTP := handler.dbConn.GetOTP()
+	if dbOTP.Key == nil {
+		otp, err := twofactor.NewTOTP("Pleiades Client", "Pleiades", crypto.SHA1, 6)
+		if err != nil {
+			log.Println("Error creating new OTP:")
+			log.Fatal(err)
+		}
+		handler.otp = *otp
+
+		otpBytes, err := otp.ToBytes()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		handler.dbConn.PutOTP(otpBytes)
+	} else {
+		otp, err := twofactor.TOTPFromBytes(dbOTP.Key, "Pleiades")
+		if err != nil {
+			log.Println("Error creating OTP from backup:")
+			log.Fatal(err)
+		}
+		handler.otp = *otp
+	}
+
+	qrBytes, err := handler.otp.QR()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = ioutil.WriteFile("QR.png", qrBytes, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func (handler *Handler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	conn, err := upgrader.Upgrade(res, req, nil)
 	if err != nil {
 		log.Println(err)
@@ -73,74 +80,123 @@ func (handler Handler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	}
 
 	LoginCrypt := crypto.SHA256.New()
+	connection := Templates.Connection{false, Templates.Device{""}, "", conn}
 
-	otp, err := twofactor.NewTOTP("bruder.kraft225@gmail.com", "Bob620", crypto.SHA1, 6)
-	if err != nil {
-		log.Println(err)
-		return
-	}
+	// Authenticate a new client or login an existing one
+	var initConnection Templates.InitConnection
+	conn.ReadJSON(&initConnection)
 
-	otpBytes, err := otp.ToBytes()
-	if err != nil {
-		log.Println(err)
-		return
-	}
+	if initConnection.Auth.Key != "" {
+		// Authenticate the client and provide credentials for future logins
+		qrBytes, err := handler.otp.QR()
+		if err != nil {
+			log.Println(err)
+			conn.Close()
+			return
+		}
+		err = ioutil.WriteFile("test.png", qrBytes, 0644)
+		if err != nil {
+			log.Println(err)
+		}
 
-	connection := Connection{false, Device{"test"}, otpBytes, conn, ""}
-
-	qrBytes, err := otp.QR()
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	err = ioutil.WriteFile("test.png", qrBytes, 0644)
-	if err != nil {
-		log.Println(err)
-	}
-
-	for {
-		if !connection.Authed {
-			var request AuthInitial
-			err := conn.ReadJSON(&request)
-
+		err = handler.otp.Validate(initConnection.Auth.Key)
+		if err == nil {
+			pass, err := generateLoginCredentials()
 			if err != nil {
+				log.Println("Unable to generate login credentials")
 				log.Println(err)
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Println(err)
-				}
-				break
+				conn.Close()
+				return
 			}
 
-			err = otp.Validate(request.Key)
+			deviceId, err := uuid.NewV4()
 			if err != nil {
+				log.Println("Unable to generate device id")
 				log.Println(err)
-				break
+				conn.Close()
+				return
 			}
 
-			connection.Login = string(LoginCrypt.Sum([]byte("test"+"test")))
+			connection.Device.Id = deviceId.String()
+
+			LoginCrypt.Reset()
+			LoginCrypt.Write([]byte(connection.Device.Id+fmt.Sprintf("%x", pass)))
+			connection.Login = fmt.Sprintf("%x", LoginCrypt.Sum(nil))
 			connection.Authed = true
 
-			handler.SendMessage(connection.Conn, Request{"test", "test", "test"})
-		} else {
-			var request Login
-			err := conn.ReadJSON(&request)
-			if err != nil {
+			// Store the connection
+			handler.dbConn.InsertConnection(connection)
+
+			if err := conn.WriteJSON(Templates.AuthReturn{"auth", connection.Device.Id, fmt.Sprintf("%x", pass)}); err != nil {
 				log.Println(err)
 			}
+		} else {
+			log.Println(err)
+			conn.Close()
+			return
+		}
 
-			if connection.Login == string(LoginCrypt.Sum([]byte(request.Id+request.Pass))) {
-				log.Println("Logged in")
-			} else {
-				break
-			}
+		// Login the existing client
+		var initConnection Templates.InitConnection
+		conn.ReadJSON(&initConnection)
+		if err != nil {
+			log.Println(err)
+		}
+
+		LoginCrypt.Reset()
+		LoginCrypt.Write([]byte(initConnection.Login.Id+initConnection.Login.Pass))
+
+		if connection.Login != fmt.Sprintf("%x", LoginCrypt.Sum(nil)) {
+			conn.Close()
+			return
+		}
+	} else if initConnection.Login.Id != "" {
+		// Get the existing connection info
+		connection = handler.dbConn.GetConnection(initConnection.Login.Id)
+		connection.Conn = conn
+
+		// Login the existing client
+		LoginCrypt.Reset()
+		LoginCrypt.Write([]byte(initConnection.Login.Id+initConnection.Login.Pass))
+
+		if connection.Login != fmt.Sprintf("%x", LoginCrypt.Sum(nil)) {
+			conn.Close()
+			return
+		}
+	} else {
+		conn.Close()
+		return
+	}
+
+	if err := conn.WriteJSON(Templates.GeneralResponse{"login", "login", "true"}); err != nil {
+		log.Println(err)
+	}
+
+	// If logged in
+	for {
+		var request Templates.Request
+		err := conn.ReadJSON(&request)
+		if err != nil {
+			log.Println("Unexpected closed connection")
+//			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+//				log.Println("Unexpected closed connection")
+//			}
+			break
 		}
 	}
 
+	// Update the connection
 	conn.Close()
+	connection.Conn = nil
+//	handler.dbConn.UpdateConnection(connection)
+	log.Println("Connection closed/device logout")
 }
 
-func (handler Handler) SendMessage(conn *websocket.Conn, request Request) {
-	if err := conn.WriteJSON(request); err != nil {
-		log.Println(err)
+func generateLoginCredentials() (string, error) {
+	b := make([]byte, 20)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
 	}
+	return string(b), nil
 }
