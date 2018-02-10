@@ -168,11 +168,12 @@ func (handler *Handler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := conn.WriteJSON(Templates.GeneralResponse{"login", "login", "true"}); err != nil {
+	// Logged in, continue the connection
+
+	if err := conn.WriteJSON(Templates.GeneralResponse{Service: "login", Type: "login", Message: "true"}); err != nil {
 		log.Println(err)
 	}
 
-	// If logged in
 	for {
 		var request Templates.Request
 		err := conn.ReadJSON(&request)
