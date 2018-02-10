@@ -12,7 +12,7 @@ Client connects to server, server will wait for authcode to be sent
 {
     "auth": {
         "deviceType": "generalClient",
-        "key": AUTHCODE
+        "key": "AUTHCODE"
     }
 }
 ```
@@ -20,7 +20,7 @@ After the client sends the auth code, if correct the server will send a return m
 ```json
 {
     "type": "auth",
-    "id": "ew9gh4e5yq3hueitgruigr"
+    "id": "ew9gh4e5yq3hueitgruigr",
     "pass": "ewg9hert98h54wrtht"
 }
 ```
