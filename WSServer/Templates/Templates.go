@@ -27,7 +27,7 @@ type Login struct {
 type GeneralResponse struct {
 	Service string `json:"service"`
 	Type string `json:"type"`
-	Message string `json:"message"`
+	Message interface{} `json:"message"`
 }
 
 type Request struct {
@@ -45,4 +45,10 @@ type Connection struct {
 	Device Device
 	Login string
 	Conn *websocket.Conn
+}
+
+type Service struct {
+	ServiceName string
+	Entry func(conn *websocket.Conn, subType string, message string, variables map[string]interface{})
+	Variables map[string]interface{}
 }

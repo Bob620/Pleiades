@@ -24,11 +24,15 @@ var (
 //	Input string `json:"input"`
 //}
 
-
-
 type Handler struct {
 	otp twofactor.Totp
 	dbConn Database.MongodbConn
+	liveClients []Templates.Connection
+	services []Templates.Service
+}
+
+func (handler *Handler) AddService(serviceName string, entryFunc func(conn *websocket.Conn, subType string, message string, variables map[string]interface{})) {
+	handler.services = append(handler.services, Templates.Service{ServiceName: serviceName, Entry: entryFunc, Variables: make(map[string]interface{})})
 }
 
 func (handler *Handler) Setup(dbConn Database.MongodbConn) {
@@ -127,7 +131,7 @@ func (handler *Handler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 			// Store the connection
 			handler.dbConn.InsertConnection(connection)
 
-			if err := conn.WriteJSON(Templates.AuthReturn{"auth", connection.Device.Id, fmt.Sprintf("%x", pass)}); err != nil {
+			if err := conn.WriteJSON(Templates.AuthReturn{Type: "auth", Id: connection.Device.Id, Pass: fmt.Sprintf("%x", pass)}); err != nil {
 				log.Println(err)
 			}
 		} else {
@@ -183,6 +187,16 @@ func (handler *Handler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 //				log.Println("Unexpected closed connection")
 //			}
 			break
+		}
+
+		i := 0
+		for i < len(handler.services) {
+			service := handler.services[i]
+			if service.ServiceName == request.Service {
+				service.Entry(conn, request.Type, request.Message, service.Variables)
+				break
+			}
+			i++
 		}
 	}
 

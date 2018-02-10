@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"time"
 	"github.com/globalsign/mgo/bson"
+	"github.com/gorilla/websocket"
+	"./WSServer/Templates"
 )
 
 type Test struct {
@@ -59,6 +61,17 @@ func main() {
 		Method: http.MethodGet,
 		Routes: []HttpServer.Route{},
 		Action: HttpServer.ServeDir("./static/dist", "assets"),
+	})
+
+	wsserver.AddService("test", func(conn *websocket.Conn,subType string, message string, variables map[string]interface{}) {
+		variables["test"] = map[string]string {
+			"Test": message,
+		}
+
+		switch subType {
+		case "test":
+			conn.WriteJSON(Templates.GeneralResponse{Service: "test", Type: "test", Message: variables["test"]})
+		}
 	})
 
 	go func() {
